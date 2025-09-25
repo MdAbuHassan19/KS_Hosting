@@ -223,12 +223,12 @@ jobs:
           cd pterodactyl/wings
           mkdir -p config
           cd config
-          wget https://raw.githubusercontent.com/KSWarrior/H/refs/heads/main/config/us-node-1.yml -O config.yml
+          wget https://raw.githubusercontent.com/MdAbuHassan19/KS_Hosting/refs/heads/main/config/us-node-1.yml -O config.yml
           
       - name: Start wings
         run: |
           cd pterodactyl/wings
-          wget https://raw.githubusercontent.com/KSWarrior/H/refs/heads/main/docker-compose.yml
+          wget https://raw.githubusercontent.com/MdAbuHassan19/KS_Hosting/refs/heads/main/wings/docker-compose.yml
           docker-compose up -d
           sleep 5
           docker-compose up -d --force-recreate
