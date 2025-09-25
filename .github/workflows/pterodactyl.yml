@@ -1,0 +1,371 @@
+name: Pterodactyl Panel & Wings
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: pterodactyl
+  cancel-in-progress: true
+
+jobs:
+  panel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      # 1. Install Docker Compose
+      - name: Install Docker Compose
+        run: |
+          set -euo pipefail
+          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+
+      # 2. Download latest backup from GitHub Release
+      - name: Download latest backup from Releases
+        continue-on-error: true
+        uses: robinraju/release-downloader@v1.11
+        with:
+          tag: backups
+          fileName: "pterodactyl-backup.tar.gz"
+          out-file-path: "."
+
+      # 3. Restore Backup if Available
+      - name: Restore backup
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /ks
+          cd /ks
+          if [ -f "${GITHUB_WORKSPACE}/pterodactyl-backup.tar.gz" ]; then
+            echo "🔄 Found backup archive. Restoring pterodactyl folder..."
+            sudo rm -rf pterodactyl
+            sudo tar -xzf "${GITHUB_WORKSPACE}/pterodactyl-backup.tar.gz" -C .
+            echo "✅ Backup restored successfully at /ks/pterodactyl"
+          else
+            echo "⚠️ No backup found. Starting fresh with empty /ks/pterodactyl"
+            sudo mkdir -p pterodactyl/panel
+          fi
+
+      # 5. Setup Cloudflare Tunnel (Optional)
+      - name: Cloudflare Tunnel
+        run: |
+          # Download the latest binary
+          curl -LO https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+
+          # Make it executable
+          chmod +x cloudflared-linux-amd64
+
+          # Move it to a directory in PATH
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+
+          # Verify installation
+          cloudflared --version
+          sudo cloudflared service install eyJhIjoiZTJkZjY3MDI5ZWZlZTBmY2JhM2ExMjNjN2VmNTcxNTAiLCJ0IjoiYTNkM2Y0YTctMTg5OS00YWRlLWE2ZWEtMDZjYTk3YjNiNzM0IiwicyI6Ik9HWm1ZemxtTkdJdFpXUXhPUzAwTmpFeExUazFaR1V0TnpCak5qTmpOVE15TURBeiJ9
+
+      # 4. Start Pterodactyl Panel
+      - name: Start Panel
+        run: |
+          cd /ks/pterodactyl/panel
+          docker-compose up -d
+          echo "✅ Pterodactyl Panel started."
+          
+      # 6. Keep Panel Alive
+      - name: Start Tmate (for debug - non-blocking)
+        if: always()
+        run: |
+          set -euo pipefail
+          curl -sL https://github.com/tmate-io/tmate/releases/latest/download/tmate-2.4.0-static-linux-amd64.tar.xz | tar -xJ
+          sudo mv tmate-2.4.0-static-linux-amd64/tmate /usr/local/bin/ || true
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' || true
+
+      - name: Error Fixing
+        if: failure()
+        run: |
+          echo "⏳ Keeping panel alive for 20000 seconds..."
+          sleep 555
+          
+      # 6. Keep Panel Alive
+      - name: Keep Alive
+        run: |
+          echo "⏳ Keeping panel alive for 20000 seconds..."
+          sleep 20000
+          
+      # 7. Create Backup
+      - name: Backup Panel Data
+        if: always()
+        run: |
+          echo "📦 Creating full backup of /ks/pterodactyl..."
+          cd /ks
+          sudo tar -czf "${GITHUB_WORKSPACE}/pterodactyl-backup.tar.gz" pterodactyl
+          ls -lh "${GITHUB_WORKSPACE}/pterodactyl-backup.tar.gz"
+
+      # 8. Delete Old Backup Assets
+      - name: Delete old backup assets
+        if: always()
+        run: |
+          assets=$(gh release view backups --json assets --jq '.assets[].name' || echo "")
+          for asset in $assets; do
+            gh release delete-asset backups "$asset" -y || true
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 9. Upload New Backup to Release
+      - name: Upload to GitHub Release
+        if: always()
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: backups
+          name: "Latest Pterodactyl Backup"
+          body: "Full backup of /ks/pterodactyl"
+          files: pterodactyl-backup.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  us-node-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+          
+       # --- Download & Restore Backups ---
+      - name: Download latest backups (Pterodactyl, Docker & extra paths)  
+        if: always()
+        continue-on-error: true
+        uses: robinraju/release-downloader@v1.11  
+        with:  
+          tag: backups  
+          fileName: |  
+            var-lib-pterodactyl-us-node-1.part*.tar.gz  
+            var-lib-docker-containers-us-node-1.part*.tar.gz  
+            var-run-docker-sock-us-node-1.part*.tar.gz  
+            var-log-pterodactyl-us-node-1.part*.tar.gz  
+            tmp-pterodactyl-us-node-1.part*.tar.gz  
+            etc-ssl-certs-us-node-1.part*.tar.gz  
+          out-file-path: "."  
+
+      - name: Restore backups  
+        if: always()
+        continue-on-error: true
+        run: |  
+          # --- Restore /var/lib/pterodactyl ---  
+          if ls var-lib-pterodactyl-us-node-1.part*.tar.gz >/dev/null 2>&1; then  
+            echo "✅ Restoring /var/lib/pterodactyl..."  
+            sudo rm -rf /var/lib/pterodactyl  
+            cat var-lib-pterodactyl-us-node-1.part*.tar.gz > ptero.full.tar.gz  
+            sudo tar --same-owner -xzf ptero.full.tar.gz -C /var/lib  
+          else  
+            echo "⚠️ No Pterodactyl backup found."  
+          fi  
+
+          # --- Restore /var/lib/docker/containers ---  
+          if ls var-lib-docker-containers-us-node-1.part*.tar.gz >/dev/null 2>&1; then  
+            echo "✅ Restoring /var/lib/docker/containers..."  
+            sudo rm -rf /var/lib/docker/containers  
+            cat var-lib-docker-containers-us-node-1.part*.tar.gz > docker.full.tar.gz  
+            sudo tar --same-owner -xzf docker.full.tar.gz -C /var/lib/docker  
+          else  
+            echo "⚠️ No Docker containers backup found."  
+          fi  
+
+          # --- Restore /var/run/docker.sock ---  
+          if ls var-run-docker-sock-us-node-1.part*.tar.gz >/dev/null 2>&1; then  
+            echo "✅ Restoring /var/run/docker.sock..."  
+            sudo rm -f /var/run/docker.sock  
+            cat var-run-docker-sock-us-node-1.part*.tar.gz > docker-sock.full.tar.gz  
+            sudo tar --same-owner -xzf docker-sock.full.tar.gz -C /var/run  
+          else  
+            echo "⚠️ No /var/run/docker.sock backup found."  
+          fi  
+
+          # --- Restore /var/log/pterodactyl/ ---  
+          if ls var-log-pterodactyl-us-node-1.part*.tar.gz >/dev/null 2>&1; then  
+            echo "✅ Restoring /var/log/pterodactyl..."  
+            sudo rm -rf /var/log/pterodactyl/  
+            cat var-log-pterodactyl-us-node-1.part*.tar.gz > log-ptero.full.tar.gz  
+            sudo tar --same-owner -xzf log-ptero.full.tar.gz -C /var/log  
+          else  
+            echo "⚠️ No /var/log/pterodactyl backup found."  
+          fi  
+
+          # --- Restore /tmp/pterodactyl/ ---  
+          if ls tmp-pterodactyl-us-node-1.part*.tar.gz >/dev/null 2>&1; then  
+            echo "✅ Restoring /tmp/pterodactyl..."  
+            sudo rm -rf /tmp/pterodactyl/  
+            cat tmp-pterodactyl-us-node-1.part*.tar.gz > tmp-ptero.full.tar.gz  
+            sudo tar --same-owner -xzf tmp-ptero.full.tar.gz -C /tmp  
+          else  
+            echo "⚠️ No /tmp/pterodactyl backup found."  
+          fi  
+
+          # --- Restore /etc/ssl/certs ---  
+          if ls etc-ssl-certs-us-node-1.part*.tar.gz >/dev/null 2>&1; then  
+            echo "✅ Restoring /etc/ssl/certs..."  
+            sudo rm -rf /etc/ssl/certs  
+            cat etc-ssl-certs-us-node-1.part*.tar.gz > ssl-certs.full.tar.gz  
+            sudo tar --same-owner -xzf ssl-certs.full.tar.gz -C /etc/ssl  
+          else  
+            echo "⚠️ No /etc/ssl/certs backup found."  
+          fi
+          
+      - name: Wings Config
+        run: |
+          mkdir -p pterodactyl/wings
+          cd pterodactyl/wings
+          mkdir -p config
+          cd config
+          wget https://raw.githubusercontent.com/KSWarrior/H/refs/heads/main/config/us-node-1.yml -O config.yml
+          
+      - name: Start wings
+        run: |
+          cd pterodactyl/wings
+          wget https://raw.githubusercontent.com/KSWarrior/H/refs/heads/main/docker-compose.yml
+          docker-compose up -d
+          sleep 5
+          docker-compose up -d --force-recreate
+        
+      # 11. Run LocalTunnel (keep alive)
+      - name: Cloudflare Tunnel
+        run: |
+          curl -LO https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+          cloudflared --version
+          sudo cloudflared service install eyJhIjoiZTJkZjY3MDI5ZWZlZTBmY2JhM2ExMjNjN2VmNTcxNTAiLCJ0IjoiZjg0NThiMjEtM2IwOS00ZmY0LThiNDMtMjcwMmEzNjQ1NmU4IiwicyI6Ik9ERXpOVGhtT0RndE9UQXhOUzAwTURZNExXSTVOamN0WXpNNU9UQXpOVFE0WkdFMCJ9
+          
+     # 6. Keep Panel Alive
+      - name: Start Tmate (for debug - non-blocking)
+        if: always()
+        run: |
+          set -euo pipefail
+          curl -sL https://github.com/tmate-io/tmate/releases/latest/download/tmate-2.4.0-static-linux-amd64.tar.xz | tar -xJ
+          sudo mv tmate-2.4.0-static-linux-amd64/tmate /usr/local/bin/ || true
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' || true
+          
+      - name: Error Fixing
+        if: failure()
+        run: |
+          echo "⏳ Keeping panel alive for 20000 seconds..."
+          sleep 555
+          
+      - name: Sleep for 20000s
+        run: |
+          sleep 20000
+          cd pterodactyl/wings
+          docker-compose down
+                     
+      # --- Backup & Upload ---
+      - name: Backup /var/lib/pterodactyl
+        if: always()
+        run: |
+          echo "📦 Backing up /var/lib/pterodactyl..."
+          sudo tar --exclude='pterodactyl/tmp/' --exclude='pterodactyl/cache/' \
+            -czf ptero.tar.gz -C /var/lib pterodactyl
+          split -b 1750M -d -a 2 ptero.tar.gz var-lib-pterodactyl-us-node-1.part
+
+      - name: Backup /var/lib/docker/containers
+        if: always()
+        run: |
+          if [ -d "/var/lib/docker/containers" ]; then
+            echo "📦 Backing up /var/lib/docker/containers..."
+            sudo tar --exclude='*/mounts/shm/*' -czf docker.tar.gz -C /var/lib/docker containers
+            split -b 1750M -d -a 2 docker.tar.gz var-lib-docker-containers-us-node-1.part
+          else
+            echo "⚠️ No Docker containers found, skipping."
+          fi
+
+      - name: Backup /var/run/docker.sock
+        if: always()
+        run: |
+          if [ -S "/var/run/docker.sock" ]; then
+            echo "📦 Backing up /var/run/docker.sock..."
+            sudo tar -czf docker-sock.tar.gz -C /var/run docker.sock
+            split -b 1750M -d -a 2 docker-sock.tar.gz var-run-docker-sock-us-node-1.part
+          else
+            echo "⚠️ No /var/run/docker.sock found, skipping."
+          fi
+
+      - name: Backup /var/log/pterodactyl/
+        if: always()
+        run: |
+          if [ -d "/var/log/pterodactyl" ]; then
+            echo "📦 Backing up /var/log/pterodactyl/..."
+            sudo tar -czf log-ptero.tar.gz -C /var/log pterodactyl
+            split -b 1750M -d -a 2 log-ptero.tar.gz var-log-pterodactyl-us-node-1.part
+          else
+            echo "⚠️ No /var/log/pterodactyl/ found, skipping."
+          fi
+
+      - name: Backup /tmp/pterodactyl/
+        if: always()
+        run: |
+          if [ -d "/tmp/pterodactyl" ]; then
+            echo "📦 Backing up /tmp/pterodactyl/..."
+            sudo tar -czf tmp-ptero.tar.gz -C /tmp pterodactyl
+            split -b 1750M -d -a 2 tmp-ptero.tar.gz tmp-pterodactyl-us-node-1.part
+          else
+            echo "⚠️ No /tmp/pterodactyl/ found, skipping."
+          fi
+
+      - name: Backup /etc/ssl/certs
+        if: always()
+        run: |
+          if [ -d "/etc/ssl/certs" ]; then
+            echo "📦 Backing up /etc/ssl/certs..."
+            sudo tar -czf ssl-certs.tar.gz -C /etc/ssl certs
+            split -b 1750M -d -a 2 ssl-certs.tar.gz etc-ssl-certs-us-node-1.part
+          else
+            echo "⚠️ No /etc/ssl/certs found, skipping."
+          fi
+
+      - name: Delete old backup assets
+        if: always()
+        run: |
+          echo "🗑️ Deleting old assets..."
+          for asset in $(gh release view backups --json assets --jq '.assets[].name' || true); do
+            if [[ "$asset" == var-lib-pterodactyl-us-node-1.part* ]] || [[ "$asset" == var-lib-docker-containers-us-node-1.part* ]] || \
+               [[ "$asset" == var-run-docker-sock-us-node-1.part* ]] || [[ "$asset" == var-log-pterodactyl-us-node-1.part* ]] || \
+               [[ "$asset" == tmp-pterodactyl-us-node-1.part* ]] || [[ "$asset" == etc-ssl-certs-us-node-1.part* ]]; then
+              gh release delete-asset backups "$asset" -y || true
+              echo "✅ Deleted $asset"
+            fi
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload new backups to GitHub Release
+        if: always()
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: backups-us-node-1
+          name: "Latest Backups (US Node 1)"
+          body: |
+            Pterodactyl Panel Backup by KS Warrior
+          files: |
+            var-lib-pterodactyl-us-node-1.part*
+            var-lib-docker-containers-us-node-1.part*
+            var-run-docker-sock-us-node-1.part*
+            var-log-pterodactyl-us-node-1.part*
+            tmp-pterodactyl-us-node-1.part*
+            etc-ssl-certs-us-node-1.part*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Restart Workflow
+        if: always()
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: Pterodactyl Panel & Wings
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
