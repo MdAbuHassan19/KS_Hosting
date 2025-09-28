@@ -219,7 +219,7 @@ jobs:
           
           # __ restor Docker compesos __
           cat pterodactyl-wings-vm.tar.part* > pterodactyl-wings-vm-merged.tar
-docker import pterodactyl-wings-vm-merged.tar pterodactyl-wings-vm-image
+          docker import pterodactyl-wings-vm-merged.tar pterodactyl-wings-vm-image
           
       - name: Wings Config
         run: |
