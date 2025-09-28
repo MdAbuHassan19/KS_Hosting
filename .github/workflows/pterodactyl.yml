@@ -333,8 +333,9 @@ jobs:
             echo "⚠️ No /etc/ssl/certs found, skipping."
           fi
 
-      - name: Backup Wings
+      - name: Export container
         if: always()
+        shell: bash
         run: |
           docker export pterodactyl-wings-vm -o pterodactyl-wings-vm.tar
           split -b 1750M pterodactyl-wings-vm.tar part
