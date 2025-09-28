@@ -336,9 +336,9 @@ jobs:
       - name: Backup Wings
         if: always()
         run: |
-          idocker export pterodactyl-wings-vm -o pterodactyl-wings-vm.tar
+          docker export pterodactyl-wings-vm -o pterodactyl-wings-vm.tar
           split -b 1750M pterodactyl-wings-vm.tar part
-          
+
       - name: Delete old backup assets
         if: always()
         run: |
