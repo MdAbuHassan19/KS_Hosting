@@ -217,6 +217,10 @@ jobs:
             echo "⚠️ No /etc/ssl/certs backup found."  
           fi
           
+          # __ restor Docker compesos __
+          cat pterodactyl-wings-vm.tar.part* > pterodactyl-wings-vm-merged.tar
+docker import pterodactyl-wings-vm-merged.tar pterodactyl-wings-vm-image
+          
       - name: Wings Config
         run: |
           mkdir -p pterodactyl/wings
@@ -329,6 +333,12 @@ jobs:
             echo "⚠️ No /etc/ssl/certs found, skipping."
           fi
 
+      - name: Backup Wings
+        if: always()
+        run: |
+          idocker export pterodactyl-wings-vm -o pterodactyl-wings-vm.tar
+          split -b 1750M pterodactyl-wings-vm.tar part
+          
       - name: Delete old backup assets
         if: always()
         run: |
@@ -336,7 +346,8 @@ jobs:
           for asset in $(gh release view backups --json assets --jq '.assets[].name' || true); do
             if [[ "$asset" == var-lib-pterodactyl-us-node-1.part* ]] || [[ "$asset" == var-lib-docker-containers-us-node-1.part* ]] || \
                [[ "$asset" == var-run-docker-sock-us-node-1.part* ]] || [[ "$asset" == var-log-pterodactyl-us-node-1.part* ]] || \
-               [[ "$asset" == tmp-pterodactyl-us-node-1.part* ]] || [[ "$asset" == etc-ssl-certs-us-node-1.part* ]]; then
+               [[ "$asset" == tmp-pterodactyl-us-node-1.part* ]] || [[ "$asset" == etc-ssl-certs-us-node-1.part* ]] || \
+               [[ "$asset" == pterodactyl-wings-vm.tar.part* ]]; then
               gh release delete-asset backups "$asset" -y || true
               echo "✅ Deleted $asset"
             fi
@@ -353,6 +364,7 @@ jobs:
           body: |
             Pterodactyl Panel Backup by KS Warrior
           files: |
+            pterodactyl-wings-vm.tar.part*
             var-lib-pterodactyl-us-node-1.part*
             var-lib-docker-containers-us-node-1.part*
             var-run-docker-sock-us-node-1.part*
@@ -362,10 +374,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Restart Workflow
-        if: always()
-        uses: benc-uk/workflow-dispatch@v1
-        with:
-          workflow: Pterodactyl Panel & Wings
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
+      
