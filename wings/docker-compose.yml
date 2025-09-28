@@ -1,36 +1,30 @@
 version: '3.8'
 
 services:
-  wings:
-    image: ghcr.io/pterodactyl/wings:v1.6.1
-    restart: always
-    networks:
-      - wings0
-    ports:
-      - "8080:8080"
-      - "2022:2022"
-      - "443:443"
-    tty: true
+  ks-pterodactyl-wings-vm:
+    image: ghcr.io/pterodactyl/wings:latest
+    container_name: pterodactyl-wings-vm
+    restart: unless-stopped
     environment:
-      TZ: "UTC"
-      WINGS_UID: 988
-      WINGS_GID: 988
-      WINGS_USERNAME: pterodactyl
+      TZ: "$TIMEZONE"
+    command: >
+      bash -c "
+      echo '🚀 Starting Wings in VM mode...' &&
+      wings"
+    networks:
+      - ptero-net
+    ports:
+      - "8080:8080"     # Example HTTP port
+      - "2022:2022"     # Example SSH or SFTP port
+      - "443:443"     # Example Wings internal port
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
-      - "/var/lib/docker/containers/:/var/lib/docker/containers/"
-      - "./config:/etc/pterodactyl/"
-      - "/var/lib/pterodactyl/:/var/lib/pterodactyl/"
-      - "/var/log/pterodactyl/:/var/log/pterodactyl/"
-      - "/tmp/pterodactyl/:/tmp/pterodactyl/"
-      - "/etc/ssl/certs:/etc/ssl/certs:ro"
-      
+      - ./config:/etc/pterodactyl  # Data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
-  wings0:
-    name: wings0
+  ptero-net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: "172.21.0.0/16"
-    driver_opts:
-      com.docker.network.bridge.name: wings0
